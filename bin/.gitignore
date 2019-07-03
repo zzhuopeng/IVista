@@ -1,0 +1,18 @@
+# 中间生成的文件
+obj/*
+*.o
+*.orig
+*.exe
+LTECodeblock/*
+LTETransport_V1.1.1.si4project/*
+LTE_ACW.si4project/*
+# 以下为CodeBlocks项目配置文件
+*.cbp
+*.depend
+*.layout
+
+# 以下为Dev-C++项目配置文件
+# Makefile.win
+# *.xmind
+# *.dev
+# *.layout
