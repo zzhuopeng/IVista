@@ -23,16 +23,21 @@
 /**select定时**/
 #include <sys/select.h>
 /**Json**/
-#include <cJSON.h>
+#include "cJSON.h"
 /**描述符控制**/
 #include <fcntl.h>
 #include <signal.h>
 
 
 /****宏定义****/
+#define BUFF_MAX_SIZE           1024    //字符串最大长度
+
 #define JSON_MSGID_OBU			2101    //OBU本车信息上报
 #define JSON_MSGID_SPAT			2104    //OBU红绿灯倒数秒数上报
 #define JSON_MSGID_RSI			2105    //OBU事件信息上报
+#define JSON_MSGID_RSI_EV		2001    //OBU事件信息上报(紧急车辆)
+#define JSON_MSGID_RSI_TP		2002    //OBU事件信息上报(打车行人)
+
 
 #define OBU_DEVICE_ID_SIZE      32      //OBU ID长度
 #define RSU_DEVICE_ID_SIZE      32      //RSU ID长度

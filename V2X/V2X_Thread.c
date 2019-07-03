@@ -22,6 +22,8 @@ time_t now;							    //心跳机制(全局时间变量)
 time_t GetHeartBeatTime;
 pthread_mutex_t UDP_mutex = PTHREAD_MUTEX_INITIALIZER;	//UDP互斥锁
 pthread_cond_t UDP_cond = PTHREAD_COND_INITIALIZER;		//UDP条件变量
+tSPAT* spat;                            //交通灯消息[全局变量方便调用]
+
 
 /**函数声明**/
 static void V2X_Close ( tV2X* pV2X );
@@ -55,6 +57,13 @@ extern void* V2X_Thread ( void* arg )
 	pV2X->Params.Interval.V2X = 10*1000;
 	pV2X->Params.Interval.UDP_Listening = 500*1000;
 
+	//交通灯消息
+	spat = calloc ( 1, sizeof ( tSPAT ) );
+	if ( NULL == spat )
+	{
+		dbg_printf ( "[V2X_Thread]:calloc for spat failed\n" );
+		goto Error;
+	}
 
 	while ( 1 )
 	{
@@ -93,6 +102,8 @@ extern void* V2X_Thread ( void* arg )
 Error:
 	dbg_printf ( "[HMI_Thread]:Error!\n" );
 	V2X_Close ( pV2X );
+	//释放交通灯spat
+	free ( spat );
 	pthread_exit ( NULL );
 }
 
@@ -129,7 +140,7 @@ static void V2X_Close ( tV2X* pV2X )
 static void* UDP_Lisening_thread ( void* pV )
 {
 	tV2X* pV2X = ( tV2X* ) pV;
-	char recv_buf[256] = { 0 };
+	char recv_buf[BUFF_MAX_SIZE] = { 0 };
 
 	int clientFd = pV2X->ASI.clientfd.OBUFD;
 	activate_nonblock ( clientFd ); //设置为非阻塞
@@ -150,15 +161,15 @@ static void* UDP_Lisening_thread ( void* pV )
 		// 0.0 重新设置超时时间和文件描述符集合
 		FD_SET ( clientFd, &fds );
 		struct timeval timeout;
-		timeout.tv_sec = 3;
+		timeout.tv_sec = 2;
 		timeout.tv_usec = 0;
 
 		// 1.0 更新系统当前时间
 		time ( &now );
 
-		// 2.0 当前系统时间与上一次获取到HMI心跳包的系统时间做差，若大于8s，
+		// 2.0 当前系统时间与上一次获取到HMI心跳包的系统时间做差，若大于4s，
 		// 认为已经和HMI socket服务器断开连接,退出心跳线程，关闭客户端各个模块socketfd
-		if ( now - GetHeartBeatTime > 8  &&  ( -1 == sendto ( clientFd, 1, 1, 0, serveraddr, len ) ) )
+		if ( now - GetHeartBeatTime > 4  &&  ( -1 == sendto ( clientFd, 1, 1, 0, serveraddr, len ) ) )
 		{
 			dbg_printf ( "[V2X_thread]->[UDP_Lisening_thread] heartbeat time out!!~~~~~~~~~~~~~~~\n" );
 			pthread_mutex_lock ( &UDP_mutex );
@@ -211,19 +222,101 @@ static void* UDP_Lisening_thread ( void* pV )
 
 			// 7.0 解析接收到的数据
 			cJSON* root = cJSON_Parse ( recv_buf );
+			if ( NULL == root )
+			{
+				dbg_printf ( "[V2X_thread]->[UDP_Lisening_thread]cJSON ROOT ERROR\n" );
+				continue;
+			}
+			cJSON* data = cJSON_GetObjectItem ( root, "data" );
 			cJSON* item = cJSON_GetObjectItem ( root, "tag" );
-			int tag = item->valueint;
 			//根据tag的编号，解析对应的数据
-			switch ( tag )
+			switch ( item->valueint )
 			{
 				case JSON_MSGID_OBU:
-
+					item = cJSON_GetObjectItem ( data, "device_id" );
+					dbg_printf ( "[V2X_thread]->[UDP_Lisening_thread]get OBU Msg:%s\n", item->valuestring );
 					break;
 				case JSON_MSGID_SPAT:
-
+					item = cJSON_GetObjectItem ( data, "device_id" );
+					if ( NULL != item )
+					{
+						memmove ( spat->device_id, item->valuestring, sizeof ( item->valuestring ) );
+					}
+					item = cJSON_GetObjectItem ( data, "lat" );
+					if ( NULL != item )
+					{
+						spat->lat = item->valuedouble;
+					}
+					item = cJSON_GetObjectItem ( data, "lon" );
+					if ( NULL != item )
+					{
+						spat->lon = item->valuedouble;
+					}
+					item = cJSON_GetObjectItem ( data, "ele" );
+					if ( NULL != item )
+					{
+						spat->ele = ( float ) item->valuedouble;
+					}
+					item = cJSON_GetObjectItem ( data, "hea" );
+					if ( NULL != item )
+					{
+						spat->hea = ( float ) item->valuedouble;
+					}
+					//判断获取哪个相位
+					item = cJSON_GetObjectItem ( data, "phase" );
+					int phaseSize = cJSON_GetArraySize ( item );
+					int i=0;
+					for ( i=0; i<phaseSize; i++ )
+					{
+                        cJSON* phaseItem;
+						cJSON* object = cJSON_GetArrayItem ( item, i );
+                        phaseItem = cJSON_GetObjectItem ( object, "direction" );
+						if ( NULL != phaseItem )
+						{
+							spat->phase.direction = phaseItem->valueint;
+						}
+						phaseItem = cJSON_GetObjectItem ( object, "color" );
+						if ( NULL != phaseItem )
+						{
+							spat->phase.color = phaseItem->valueint;
+						}
+						phaseItem = cJSON_GetObjectItem ( object, "guide_speed_max" );
+						if ( NULL != phaseItem )
+						{
+							spat->phase.guide_speed_max = phaseItem->valuedouble;
+						}
+						phaseItem = cJSON_GetObjectItem ( object, "guide_speed_min" );
+						if ( NULL != phaseItem )
+						{
+							spat->phase.guide_speed_min = phaseItem->valuedouble;
+						}
+						phaseItem = cJSON_GetObjectItem ( object, "id" );
+						if ( NULL != phaseItem )
+						{
+							spat->phase.id = phaseItem->valueint;
+						}
+						phaseItem = cJSON_GetObjectItem ( object, "time" );
+						if ( NULL != phaseItem )
+						{
+							spat->phase.time = phaseItem->valueint;
+						}
+					}
+					dbg_printf ( "[V2X_thread]->[UDP_Lisening_thread] spat lat:%lf, spat lon:%lf\n", spat->lat, spat->lon );
 					break;
 				case JSON_MSGID_RSI:
-
+					item = cJSON_GetObjectItem ( data, "type" );
+					switch ( item->valueint )
+					{
+						case JSON_MSGID_RSI_EV:
+							dbg_printf ( "[V2X_thread]->[UDP_Lisening_thread] Emergency vehicle\n" );
+							break;
+						case JSON_MSGID_RSI_TP:
+							dbg_printf ( "[V2X_thread]->[UDP_Lisening_thread] Taxi pedestrian\n" );
+							break;
+						default:
+							dbg_printf ( "[V2X_thread]->[UDP_Lisening_thread] RSI Msg Type ERROR\n" );
+							break;
+					}
 					break;
 			}
 
@@ -252,6 +345,7 @@ static void* UDP_Lisening_thread ( void* pV )
 static int UDP_Client_Connect ( tV2X* pV2X )
 {
 	char* buff = "connect\n";
+
 	// 创建socket套接口
 	int clientfd = socket ( AF_INET, SOCK_DGRAM, 0 );
 	if ( clientfd == -1 )
@@ -270,17 +364,23 @@ static int UDP_Client_Connect ( tV2X* pV2X )
 	dbg_printf ( "[V2X_thread]->[UDP_Client_Connect] Now require connect to server[ %s ] ...\n", pV2X->ASI.pSIP );
 	while ( 1 )
 	{
-		//发送一些数据，测试是否联通
+		//发送一些数据，测试是否联通(UDP不能通过发送数据判断联通)
 		int ret = sendto ( clientfd, buff, strlen ( buff ), 0, ( struct sockaddr* ) & ( pV2X->ASI.serverAddr ), sizeof ( pV2X->ASI.serverAddr ) );
 		if ( ret < 0 )
 		{
 			perror ( "connect:" );
 			dbg_printf ( "[V2X_thread]->[UDP_Client_Connect] Now require reconnect to server[ %s ] ...\n", pV2X->ASI.pSIP );
 		}
+		else if ( ret == 0 )
+		{
+			perror ( "connect:" );
+			dbg_printf ( "[V2X_thread]->[UDP_Client_Connect] Can not Send Msg to server[ %s ] ...\n", pV2X->ASI.pSIP );
+		}
 		else
 		{
+			//发送数据成功，建立连接
 			dbg_printf ( "[V2X_thread]->[UDP_Client_Connect] connection established.\n" );
-			break; //成功连接才会退出该循环
+			break;
 		}
 	}
 	return clientfd;
