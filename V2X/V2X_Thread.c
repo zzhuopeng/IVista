@@ -275,6 +275,7 @@ static void* UDP_Lisening_thread ( void* pV )
 						{
 							spat->phase.direction = phaseItem->valueint;
 						}
+                        //direction判断
 						phaseItem = cJSON_GetObjectItem ( object, "color" );
 						if ( NULL != phaseItem )
 						{
